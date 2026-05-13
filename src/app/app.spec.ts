@@ -14,10 +14,12 @@ describe('App', () => {
     expect(app).toBeTruthy();
   });
 
-  it('should render title', async () => {
+  it('should render the watch room', async () => {
     const fixture = TestBed.createComponent(App);
     await fixture.whenStable();
     const compiled = fixture.nativeElement as HTMLElement;
-    expect(compiled.querySelector('h1')?.textContent).toContain('Hello, EchoRoom');
+    expect(compiled.querySelector('.brand')?.textContent).toContain('EchoRoom');
+    expect(compiled.querySelector('iframe')?.getAttribute('title')).toContain('Shared YouTube video');
+    expect(compiled.querySelector('.chat-area')?.textContent).toContain('Guest 208');
   });
 });
