@@ -1,9 +1,31 @@
-<main class="app-shell" [class.dark-theme]="isDarkMode()">
+<main
+  class="app-shell"
+  [class.dark-theme]="isDarkMode()"
+  [class.ambient-mode]="isAmbientMode()"
+>
   <nav class="navbar" aria-label="Main navigation">
     <a class="brand" href="/" aria-label="EchoRoom home">EchoRoom</a>
     <div class="nav-actions">
       @if (signedIn()) {
-        <div class="room-info" aria-label="Current room">Room: {{ currentRoomId() }}</div>
+        <button
+          class="room-info"
+          type="button"
+          [attr.aria-label]="'Copy room id ' + currentRoomId()"
+          (click)="copyRoomId()"
+        >
+          Room: {{ currentRoomId() }}
+          @if (isRoomIdCopied()) {
+            <span>Copied</span>
+          }
+        </button>
+        <button
+          class="theme-toggle ambient-toggle"
+          type="button"
+          [class.is-on]="isAmbientMode()"
+          (click)="toggleAmbientMode()"
+        >
+          {{ isAmbientMode() ? 'Exit ambient' : 'Ambient mode' }}
+        </button>
       }
       <button
         class="theme-toggle"
@@ -109,9 +131,38 @@
         }
       </div>
 
-      <button class="play-toggle" type="button" (click)="togglePlayback()">
+      <button
+        class="play-toggle"
+        type="button"
+        [disabled]="!hasVideoControl()"
+        (click)="togglePlayback()"
+      >
         {{ isPlaying() ? 'Pause' : 'Play' }}
       </button>
+
+      <div class="control-strip" aria-live="polite">
+        <span>
+          Control:
+          <strong>{{ controllerName() || 'Waiting...' }}</strong>
+        </span>
+        @if (!hasVideoControl()) {
+          <button type="button" (click)="takeVideoControl()">Take control</button>
+        }
+      </div>
+      <p class="control-note">
+        The user with control can play/pause/change tracks.
+      </p>
+      <div class="ambient-prompt">
+        <span>Try Ambient mode for a better experience.</span>
+        <button
+          class="ambient-toggle"
+          type="button"
+          [class.is-on]="isAmbientMode()"
+          (click)="toggleAmbientMode()"
+        >
+          {{ isAmbientMode() ? 'Exit ambient' : 'Try ambient' }}
+        </button>
+      </div>
 
       <form class="video-link-form" (ngSubmit)="loadVideo()">
         <label for="youtubeLink">YouTube link</label>
@@ -120,9 +171,10 @@
           name="youtubeLink"
           type="url"
           placeholder="Paste a YouTube link to watch together"
+          [disabled]="!hasVideoControl()"
           [(ngModel)]="youtubeLink"
         />
-        <button type="submit">Load</button>
+        <button type="submit" [disabled]="!hasVideoControl()">Load</button>
       </form>
     </section>
 

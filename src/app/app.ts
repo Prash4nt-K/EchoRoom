@@ -11,6 +11,7 @@ import {
 import { DomSanitizer } from '@angular/platform-browser';
 import { FormsModule } from '@angular/forms';
 import { io, Socket } from 'socket.io-client';
+import { environment } from '../environments/environment';
 
 type ChatMessage = {
   id: number;
@@ -37,6 +38,21 @@ type ChatMessageEvent = {
   text?: string;
 };
 
+type VideoSyncEvent = {
+  type?: 'change' | 'play' | 'pause' | 'seek' | 'state';
+  videoId?: string;
+  currentTime?: number;
+  isPlaying?: boolean;
+  updatedAt?: number;
+  sender?: string;
+  senderClientId?: string;
+};
+
+type ControlStateEvent = {
+  controller?: string;
+  controllerClientId?: string;
+};
+
 type RoomSession = {
   name: string;
   roomId: string;
@@ -45,6 +61,8 @@ type RoomSession = {
 type YouTubePlayer = {
   playVideo: () => void;
   pauseVideo: () => void;
+  seekTo: (seconds: number, allowSeekAhead: boolean) => void;
+  getCurrentTime: () => number;
   loadVideoById: (videoId: string) => void;
   destroy: () => void;
 };
@@ -72,8 +90,6 @@ declare global {
 }
 
 let youtubeApiPromise: Promise<void> | null = null;
-const API_BASE = 'http://localhost:8080';
-const SOCKET_BASE = 'http://localhost:9092';
 const ROOM_SESSION_KEY = 'echo-room-session';
 
 @Component({
@@ -89,6 +105,13 @@ export class App implements AfterViewInit, OnDestroy {
   private readonly sanitizer = inject(DomSanitizer);
   private youtubePlayer?: YouTubePlayer;
   private socket?: Socket;
+  private isApplyingRemoteVideoState = false;
+  private isPlayerReady = false;
+  private pendingVideoState?: VideoSyncEvent;
+  private playerSyncIntervalId?: number;
+  private lastObservedPlayerTime = 0;
+  private lastObservedAt = 0;
+  private readonly senderClientId = this.createSenderClientId();
 
   protected draft = '';
   protected userName = '';
@@ -102,7 +125,13 @@ export class App implements AfterViewInit, OnDestroy {
   protected youtubeLink = '';
   protected readonly isPlaying = signal(false);
   protected readonly isDarkMode = signal(false);
+  protected readonly isAmbientMode = signal(false);
+  protected readonly isRoomIdCopied = signal(false);
   protected readonly unreadMessageCount = signal(0);
+  protected readonly controllerName = signal('');
+  protected readonly hasVideoControl = computed(
+    () => this.controllerName() === this.currentUserName(),
+  );
   protected readonly videoId = signal('dQw4w9WgXcQ');
   protected readonly videoUrl = computed(() =>
     this.sanitizer.bypassSecurityTrustResourceUrl(
@@ -119,6 +148,9 @@ export class App implements AfterViewInit, OnDestroy {
   }
 
   ngOnDestroy(): void {
+    if (this.playerSyncIntervalId) {
+      window.clearInterval(this.playerSyncIntervalId);
+    }
     this.youtubePlayer?.destroy();
     this.socket?.disconnect();
   }
@@ -177,9 +209,10 @@ export class App implements AfterViewInit, OnDestroy {
     this.saveRoomSession(name, roomId);
     this.participants.set([name]);
     this.messages.set([]);
+    this.controllerName.set('');
     this.unreadMessageCount.set(0);
     this.connectSocket();
-    this.socket?.emit('joinRoom', { roomId, name });
+    this.socket?.emit('joinRoom', { roomId, name, senderClientId: this.senderClientId });
     this.signedIn.set(true);
   }
 
@@ -209,6 +242,10 @@ export class App implements AfterViewInit, OnDestroy {
   }
 
   protected loadVideo(): void {
+    if (!this.hasVideoControl()) {
+      return;
+    }
+
     const videoId = this.getYouTubeVideoId(this.youtubeLink);
 
     if (!videoId) {
@@ -221,20 +258,61 @@ export class App implements AfterViewInit, OnDestroy {
       this.videoId.set(videoId);
     }
 
+    this.videoId.set(videoId);
+    this.isPlaying.set(true);
+    this.emitVideoState('change', videoId, 0, true);
     this.youtubeLink = '';
   }
 
   protected togglePlayback(): void {
+    if (!this.hasVideoControl()) {
+      return;
+    }
+
     if (this.isPlaying()) {
+      this.isPlaying.set(false);
       this.youtubePlayer?.pauseVideo();
       return;
     }
 
+    this.isPlaying.set(true);
     this.youtubePlayer?.playVideo();
   }
 
   protected toggleTheme(): void {
     this.isDarkMode.update((isDarkMode) => !isDarkMode);
+  }
+
+  protected toggleAmbientMode(): void {
+    this.isAmbientMode.update((isAmbientMode) => !isAmbientMode);
+  }
+
+  protected async copyRoomId(): Promise<void> {
+    const roomId = this.currentRoomId();
+
+    if (!roomId) {
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(roomId);
+      this.isRoomIdCopied.set(true);
+      window.setTimeout(() => this.isRoomIdCopied.set(false), 1600);
+    } catch {
+      this.authError.set('Could not copy room id.');
+    }
+  }
+
+  protected takeVideoControl(): void {
+    if (!this.socket || !this.currentRoomId()) {
+      return;
+    }
+
+    this.socket.emit('requestControl', {
+      roomId: this.currentRoomId(),
+      name: this.currentUserName(),
+      senderClientId: this.senderClientId,
+    });
   }
 
   private async withRoomRequest(request: () => Promise<void>): Promise<void> {
@@ -255,7 +333,7 @@ export class App implements AfterViewInit, OnDestroy {
   }
 
   private async postRoom(path: string, body: Record<string, string>): Promise<RoomResponse> {
-    const response = await fetch(`${API_BASE}${path}`, {
+    const response = await fetch(`${environment.apiBaseUrl}${path}`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -276,7 +354,7 @@ export class App implements AfterViewInit, OnDestroy {
       this.socket.disconnect();
     }
 
-    this.socket = io(SOCKET_BASE);
+    this.socket = io(environment.socketBaseUrl);
 
     this.socket.on('chatMessage', (message: ChatMessageEvent) => {
       const author = message.sender || message.author || 'Someone';
@@ -295,16 +373,169 @@ export class App implements AfterViewInit, OnDestroy {
     });
 
     this.socket.on('roomUsers', (data: RoomUsersEvent) => {
-      this.participants.set(data.users?.length ? data.users : [this.currentUserName()]);
+      const users = data.users?.length ? data.users : [this.currentUserName()];
+      this.participants.set(users);
+
+      if (!this.controllerName() && users[0]) {
+        this.controllerName.set(users[0]);
+      }
     });
 
     this.socket.on('roomError', (error: { message?: string }) => {
       this.authError.set(error.message || 'The room socket reported an error.');
     });
 
+    this.socket.on('videoState', (state: VideoSyncEvent) => {
+      this.applyRemoteVideoState(state);
+    });
+
+    this.socket.on('roomVideoState', (state: VideoSyncEvent) => {
+      this.applyRemoteVideoState(state);
+    });
+
+    this.socket.on('controlState', (state: ControlStateEvent) => {
+      this.applyControlState(state);
+    });
+
     this.socket.on('connect_error', () => {
       this.authError.set('Could not connect to the live room server.');
     });
+  }
+
+  private applyControlState(state: ControlStateEvent): void {
+    if (state.controller) {
+      this.controllerName.set(state.controller);
+      this.rememberObservedPlayerTime();
+    }
+  }
+
+  private emitVideoState(
+    type: NonNullable<VideoSyncEvent['type']>,
+    videoId = this.videoId(),
+    currentTime = this.getPlayerCurrentTime(),
+    isPlaying = this.isPlaying(),
+  ): void {
+    if (
+      !this.socket ||
+      !this.currentRoomId() ||
+      !this.hasVideoControl() ||
+      this.isApplyingRemoteVideoState
+    ) {
+      return;
+    }
+
+    this.socket.emit('videoState', {
+      roomId: this.currentRoomId(),
+      sender: this.currentUserName(),
+      senderClientId: this.senderClientId,
+      type,
+      videoId,
+      currentTime,
+      isPlaying,
+      updatedAt: Date.now(),
+    });
+  }
+
+  private applyRemoteVideoState(state: VideoSyncEvent): void {
+    if (state.senderClientId === this.senderClientId) {
+      return;
+    }
+
+    if (!this.isPlayerReady || !this.youtubePlayer) {
+      this.pendingVideoState = state;
+      if (state.videoId) {
+        this.videoId.set(state.videoId);
+      }
+      return;
+    }
+
+    const nextVideoId = state.videoId || this.videoId();
+    const nextTime = this.getSyncedTime(state);
+    this.isApplyingRemoteVideoState = true;
+
+    if (state.videoId && state.videoId !== this.videoId()) {
+      this.videoId.set(state.videoId);
+      this.youtubePlayer.loadVideoById(state.videoId);
+    }
+
+    if (Number.isFinite(nextTime)) {
+      this.youtubePlayer.seekTo(nextTime, true);
+    }
+
+    if (state.type === 'pause' || state.isPlaying === false) {
+      this.youtubePlayer.pauseVideo();
+      this.isPlaying.set(false);
+    } else if (state.type === 'play' || state.type === 'change' || state.isPlaying) {
+      this.youtubePlayer.playVideo();
+      this.isPlaying.set(true);
+    }
+
+    this.videoId.set(nextVideoId);
+    window.setTimeout(() => {
+      this.isApplyingRemoteVideoState = false;
+    }, 300);
+  }
+
+  private getSyncedTime(state: VideoSyncEvent): number {
+    const currentTime = state.currentTime ?? 0;
+
+    if (!state.isPlaying || !state.updatedAt) {
+      return currentTime;
+    }
+
+    return currentTime + (Date.now() - state.updatedAt) / 1000;
+  }
+
+  private getPlayerCurrentTime(): number {
+    return this.youtubePlayer?.getCurrentTime() ?? 0;
+  }
+
+  private startPlayerSyncMonitor(): void {
+    if (this.playerSyncIntervalId) {
+      return;
+    }
+
+    this.playerSyncIntervalId = window.setInterval(() => {
+      if (
+        !this.isPlayerReady ||
+        !this.youtubePlayer ||
+        !this.hasVideoControl() ||
+        this.isApplyingRemoteVideoState
+      ) {
+        this.rememberObservedPlayerTime();
+        return;
+      }
+
+      const now = Date.now();
+      const currentTime = this.getPlayerCurrentTime();
+
+      if (!this.lastObservedAt) {
+        this.rememberObservedPlayerTime(currentTime, now);
+        return;
+      }
+
+      const elapsedSeconds = (now - this.lastObservedAt) / 1000;
+      const expectedTime = this.lastObservedPlayerTime + (this.isPlaying() ? elapsedSeconds : 0);
+      const jumpedSeconds = Math.abs(currentTime - expectedTime);
+
+      if (jumpedSeconds > 2.5) {
+        this.emitVideoState('seek', this.videoId(), currentTime, this.isPlaying());
+      }
+
+      this.rememberObservedPlayerTime(currentTime, now);
+    }, 1000);
+  }
+
+  private rememberObservedPlayerTime(
+    currentTime = this.getPlayerCurrentTime(),
+    observedAt = Date.now(),
+  ): void {
+    this.lastObservedPlayerTime = currentTime;
+    this.lastObservedAt = observedAt;
+  }
+
+  private createSenderClientId(): string {
+    return crypto.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
   }
 
   private restoreRoomSession(): void {
@@ -441,7 +672,16 @@ export class App implements AfterViewInit, OnDestroy {
 
     this.youtubePlayer = new window.YT.Player(iframe, {
       events: {
-        onReady: () => undefined,
+        onReady: () => {
+          this.isPlayerReady = true;
+          this.rememberObservedPlayerTime();
+          this.startPlayerSyncMonitor();
+          if (this.pendingVideoState) {
+            const state = this.pendingVideoState;
+            this.pendingVideoState = undefined;
+            this.applyRemoteVideoState(state);
+          }
+        },
         onStateChange: (event) => {
           const state = window.YT?.PlayerState;
 
@@ -451,10 +691,16 @@ export class App implements AfterViewInit, OnDestroy {
 
           if (event.data === state.PLAYING) {
             this.isPlaying.set(true);
+            const currentTime = this.getPlayerCurrentTime();
+            this.rememberObservedPlayerTime(currentTime);
+            this.emitVideoState('play', this.videoId(), currentTime, true);
           }
 
           if (event.data === state.PAUSED || event.data === state.ENDED) {
             this.isPlaying.set(false);
+            const currentTime = this.getPlayerCurrentTime();
+            this.rememberObservedPlayerTime(currentTime);
+            this.emitVideoState('pause', this.videoId(), currentTime, false);
           }
         },
       },

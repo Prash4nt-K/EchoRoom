@@ -6,3 +6,164 @@ body {
   min-height: 100%;
   margin: 0;
 }
+
+.app-shell.ambient-mode .watch-room {
+  justify-items: center;
+  grid-template-columns: 1fr;
+}
+
+.app-shell.ambient-mode .watch-room::before,
+.app-shell.ambient-mode .watch-room::after {
+  position: fixed;
+  inset: 0;
+  content: "";
+  pointer-events: none;
+}
+
+.app-shell.ambient-mode .watch-room::before {
+  z-index: 0;
+  opacity: 0.46;
+  mix-blend-mode: screen;
+  background:
+    repeating-linear-gradient(100deg, transparent 0 44px, rgba(103, 192, 166, 0.18) 45px 50px, transparent 51px 94px),
+    repeating-linear-gradient(-18deg, transparent 0 72px, rgba(244, 193, 93, 0.16) 73px 78px, transparent 79px 134px),
+    linear-gradient(120deg, rgba(45, 143, 120, 0.24), rgba(244, 193, 93, 0.18), rgba(107, 183, 255, 0.2));
+  background-size: 220px 220px, 260px 260px, 200% 200%;
+  animation: ambientLights 14s linear infinite;
+}
+
+.app-shell.ambient-mode .watch-room::after {
+  z-index: 1;
+  opacity: 0.24;
+  background:
+    radial-gradient(ellipse at center, transparent 0 36%, rgba(0, 0, 0, 0.52) 82%),
+    repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.08) 0 1px, transparent 1px 38px);
+  animation: ambientScan 9s ease-in-out infinite alternate;
+}
+
+.app-shell.ambient-mode .video-section {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  padding: 0;
+  border-radius: 0;
+  box-shadow: none;
+  opacity: 0.42;
+  pointer-events: none;
+}
+
+.app-shell.ambient-mode .video-frame {
+  width: 100%;
+  height: 100%;
+  aspect-ratio: auto;
+  border-radius: 0;
+}
+
+.app-shell.ambient-mode .video-frame iframe {
+  transform: scale(1.14);
+}
+
+.app-shell.ambient-mode .play-toggle,
+.app-shell.ambient-mode .control-strip,
+.app-shell.ambient-mode .control-note,
+.app-shell.ambient-mode .ambient-prompt,
+.app-shell.ambient-mode .video-link-form,
+.app-shell.ambient-mode .video-overlay {
+  display: none;
+}
+
+.app-shell.ambient-mode .chat-panel {
+  z-index: 2;
+  width: min(1120px, calc(100vw - 64px));
+  justify-self: center;
+  border: 1px solid rgba(255, 244, 199, 0.24);
+  background:
+    linear-gradient(145deg, rgba(8, 18, 20, 0.38), rgba(20, 34, 48, 0.3)),
+    rgba(255, 255, 255, 0.025);
+  box-shadow: 0 28px 90px rgba(0, 0, 0, 0.38), inset 0 1px 0 rgba(255, 255, 255, 0.16);
+  backdrop-filter: blur(6px) saturate(1.28);
+}
+
+.app-shell.ambient-mode .navbar {
+  position: relative;
+  z-index: 3;
+}
+
+@media (max-width: 520px) {
+  .app-shell.ambient-mode .chat-panel {
+    width: 100%;
+  }
+}
+
+.ambient-prompt {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: -8px 0 0;
+  color: #fff4c7;
+  font-size: 0.88rem;
+  font-weight: 800;
+}
+
+.ambient-toggle {
+  border: 1px solid rgba(255, 244, 199, 0.78);
+  border-radius: 999px;
+  background: linear-gradient(135deg, #fff4c7, #f4c15d 52%, #67c0a6);
+  color: #10201e;
+  font-weight: 900;
+  text-transform: uppercase;
+  box-shadow: 0 0 0 1px rgba(244, 193, 93, 0.2), 0 0 18px rgba(244, 193, 93, 0.22);
+}
+
+.ambient-prompt .ambient-toggle {
+  min-height: 34px;
+  padding: 0 14px;
+  font: inherit;
+  font-size: 0.84rem;
+  cursor: pointer;
+}
+
+.ambient-toggle:hover,
+.ambient-prompt .ambient-toggle:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 0 0 1px rgba(255, 244, 199, 0.42), 0 0 26px rgba(244, 193, 93, 0.42);
+}
+
+.ambient-toggle.is-on {
+  box-shadow: 0 0 18px rgba(244, 193, 93, 0.48);
+}
+
+.room-info {
+  min-height: 34px;
+  border: 1px solid rgba(103, 192, 166, 0.54);
+  border-radius: 8px;
+  background: rgba(8, 18, 20, 0.24);
+  padding: 0 10px;
+  cursor: pointer;
+}
+
+.room-info span {
+  margin-left: 8px;
+  color: #fff4c7;
+}
+
+@keyframes ambientLights {
+  from {
+    background-position: 0 0, 0 0, 0% 50%;
+  }
+
+  to {
+    background-position: 220px 120px, -180px 180px, 100% 50%;
+  }
+}
+
+@keyframes ambientScan {
+  from {
+    transform: translateX(-2%);
+  }
+
+  to {
+    transform: translateX(2%);
+  }
+}

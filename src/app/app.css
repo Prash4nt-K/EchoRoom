@@ -21,15 +21,6 @@
   --primary-hover: #23745f;
   --input-bg: #f6edc8;
   --focus: rgba(103, 192, 166, 0.28);
-  --page-glow-a: rgba(103, 192, 166, 0.18);
-  --page-glow-b: rgba(244, 193, 93, 0.12);
-  --video-glow-a: rgba(103, 192, 166, 0.4);
-  --video-glow-b: rgba(244, 193, 93, 0.34);
-  --chat-glow-a: rgba(103, 192, 166, 0.32);
-  --chat-glow-b: rgba(244, 193, 93, 0.38);
-  --panel-sheen: rgba(255, 255, 255, 0.24);
-  --panel-tint: #dbe5c7;
-  --composer-bg: rgba(219, 229, 199, 0.78);
   --panel-card-bg:
     radial-gradient(circle at 0% 0%, rgba(103, 192, 166, 0.26), transparent 16rem),
     linear-gradient(135deg, rgba(28, 61, 63, 0.86), rgba(42, 24, 51, 0.66)),
@@ -246,15 +237,6 @@
   --primary-hover: #8bc6ff;
   --input-bg: #111821;
   --focus: rgba(107, 183, 255, 0.2);
-  --page-glow-a: rgba(107, 183, 255, 0.08);
-  --page-glow-b: rgba(255, 211, 138, 0.08);
-  --video-glow-a: rgba(74, 144, 226, 0.18);
-  --video-glow-b: rgba(255, 195, 105, 0.08);
-  --chat-glow-a: rgba(124, 99, 220, 0.14);
-  --chat-glow-b: rgba(71, 175, 154, 0.1);
-  --panel-sheen: rgba(255, 255, 255, 0.035);
-  --panel-tint: #151b23;
-  --composer-bg: rgba(21, 27, 35, 0.82);
   --panel-card-bg:
     radial-gradient(circle at 0% 0%, rgba(103, 192, 166, 0.2), transparent 16rem),
     linear-gradient(135deg, rgba(28, 61, 63, 0.72), rgba(42, 24, 51, 0.58)),
@@ -357,6 +339,7 @@
 }
 
 .watch-room {
+  position: relative;
   min-height: 0;
   overflow: hidden;
   display: grid;
@@ -434,6 +417,42 @@
   clip: rect(0, 0, 0, 0);
 }
 
+.control-strip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--muted);
+  padding: 10px 12px;
+  font-size: 0.9rem;
+  font-weight: 800;
+}
+
+.control-strip strong {
+  color: #fff4c7;
+}
+
+.control-strip button {
+  min-height: 34px;
+  border: 0;
+  border-radius: 8px;
+  background: #f4c15d;
+  color: #10201e;
+  padding: 0 12px;
+  font: inherit;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.control-note {
+  margin-top: -6px;
+  color: var(--muted);
+  font-size: 0.86rem;
+  line-height: 1.35;
+}
+
 .video-link-form input,
 .video-link-form button,
 .play-toggle {
@@ -467,6 +486,13 @@
   cursor: pointer;
 }
 
+.video-link-form input:disabled,
+.video-link-form button:disabled,
+.play-toggle:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
 .app-shell:not(.dark-theme) .video-link-form button,
 .app-shell:not(.dark-theme) .play-toggle,
 .app-shell:not(.dark-theme) .composer button {
@@ -488,6 +514,11 @@
 
 .play-toggle {
   align-self: flex-start;
+}
+
+.ambient-toggle.is-on {
+  background: #f4c15d;
+  color: #10201e;
 }
 
 .chat-panel {
