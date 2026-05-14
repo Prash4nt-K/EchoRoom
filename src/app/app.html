@@ -2,6 +2,9 @@
   <nav class="navbar" aria-label="Main navigation">
     <a class="brand" href="/" aria-label="EchoRoom home">EchoRoom</a>
     <div class="nav-actions">
+      @if (signedIn()) {
+        <div class="room-info" aria-label="Current room">Room: {{ currentRoomId() }}</div>
+      }
       <button
         class="theme-toggle"
         type="button"
@@ -12,7 +15,11 @@
       >
         <span class="theme-switch" aria-hidden="true">
           <span class="theme-switch-thumb">
-            {{ isDarkMode() ? '☾' : '☀' }}
+            @if (isDarkMode()) {
+              &#9790;
+            } @else {
+              &#9728;
+            }
           </span>
         </span>
         <span>{{ isDarkMode() ? 'Lights on?' : 'Lights off?' }}</span>
@@ -23,6 +30,68 @@
       </div>
     </div>
   </nav>
+
+  @if (!signedIn()) {
+    <div class="signin-backdrop" role="dialog" aria-modal="true" aria-labelledby="signinTitle">
+      <div class="signin-panel">
+        <h2 id="signinTitle">Join EchoRoom</h2>
+        <p>Choose an option to join an existing room or create a new one.</p>
+
+        <div class="signin-mode-toggle" role="tablist" aria-label="Sign in mode">
+          <button
+            type="button"
+            [class.active]="authMode() === 'join'"
+            (click)="setAuthMode('join')"
+          >
+            Join room
+          </button>
+          <button
+            type="button"
+            [class.active]="authMode() === 'create'"
+            (click)="setAuthMode('create')"
+          >
+            Create room
+          </button>
+        </div>
+
+        @if (authError()) {
+          <p class="signin-error" role="alert">{{ authError() }}</p>
+        }
+
+        <form class="signin-form" (ngSubmit)="authMode() === 'create' ? createRoom() : joinRoom()">
+          <label for="userName">Name</label>
+          <input
+            id="userName"
+            name="userName"
+            type="text"
+            autocomplete="name"
+            placeholder="Your display name"
+            [(ngModel)]="userName"
+          />
+
+          @if (authMode() === 'join') {
+            <label for="roomKey">Room key</label>
+            <input
+              id="roomKey"
+              name="roomKey"
+              type="text"
+              autocomplete="off"
+              placeholder="Room key"
+              [(ngModel)]="roomKey"
+            />
+          }
+
+          <button type="submit" [disabled]="isRoomRequestPending()">
+            @if (isRoomRequestPending()) {
+              Connecting...
+            } @else {
+              {{ authMode() === 'create' ? 'Create and enter' : 'Join room' }}
+            }
+          </button>
+        </form>
+      </div>
+    </div>
+  }
 
   <section class="watch-room" aria-label="Watch room">
     <section class="video-section" aria-label="Shared video">
@@ -62,7 +131,7 @@
         <h1>Chat</h1>
         <div class="people-list" aria-label="People in chat">
           @for (person of participants(); track person) {
-            <span [class.is-you]="person === 'You'">{{ person }}</span>
+            <span [class.is-you]="person === currentUserName()">{{ person }}</span>
           }
         </div>
       </header>

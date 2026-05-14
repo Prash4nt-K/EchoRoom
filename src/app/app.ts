@@ -10,12 +10,36 @@ import {
 } from '@angular/core';
 import { DomSanitizer } from '@angular/platform-browser';
 import { FormsModule } from '@angular/forms';
+import { io, Socket } from 'socket.io-client';
 
 type ChatMessage = {
   id: number;
   author: string;
   text: string;
   isYou?: boolean;
+};
+
+type RoomResponse = {
+  message?: string;
+  roomId?: string;
+  error?: string;
+};
+
+type RoomUsersEvent = {
+  users?: string[];
+  count?: number;
+};
+
+type ChatMessageEvent = {
+  sender?: string;
+  author?: string;
+  content?: string;
+  text?: string;
+};
+
+type RoomSession = {
+  name: string;
+  roomId: string;
 };
 
 type YouTubePlayer = {
@@ -48,6 +72,9 @@ declare global {
 }
 
 let youtubeApiPromise: Promise<void> | null = null;
+const API_BASE = 'http://localhost:8080';
+const SOCKET_BASE = 'http://localhost:9092';
+const ROOM_SESSION_KEY = 'echo-room-session';
 
 @Component({
   selector: 'app-root',
@@ -61,8 +88,17 @@ export class App implements AfterViewInit, OnDestroy {
 
   private readonly sanitizer = inject(DomSanitizer);
   private youtubePlayer?: YouTubePlayer;
+  private socket?: Socket;
 
   protected draft = '';
+  protected userName = '';
+  protected roomKey = '';
+  protected readonly authError = signal('');
+  protected readonly currentUserName = signal('');
+  protected readonly isRoomRequestPending = signal(false);
+  protected signedIn = signal(false);
+  protected authMode = signal<'join' | 'create'>('join');
+  protected currentRoomId = signal('');
   protected youtubeLink = '';
   protected readonly isPlaying = signal(false);
   protected readonly isDarkMode = signal(false);
@@ -73,34 +109,78 @@ export class App implements AfterViewInit, OnDestroy {
       `https://www.youtube.com/embed/${this.videoId()}?enablejsapi=1&origin=${window.location.origin}`,
     ),
   );
-  protected readonly participants = signal(['Guest 208', 'Guest 771', 'You']);
-
-  protected readonly messages = signal<ChatMessage[]>([
-    {
-      id: 1,
-      author: 'Guest 208',
-      text: 'This part is my favorite.',
-    },
-    {
-      id: 2,
-      author: 'Guest 771',
-      text: 'Same. Watching together makes it better.',
-    },
-    {
-      id: 3,
-      author: 'You',
-      text: 'Chat on the right, video on the left. Nice and simple.',
-      isYou: true,
-    },
-  ]);
+  protected readonly participants = signal<string[]>([]);
+  protected readonly messages = signal<ChatMessage[]>([]);
 
   ngAfterViewInit(): void {
     this.loadYouTubeApi().then(() => this.createYouTubePlayer());
     this.scrollChatToBottom('auto');
+    this.restoreRoomSession();
   }
 
   ngOnDestroy(): void {
     this.youtubePlayer?.destroy();
+    this.socket?.disconnect();
+  }
+
+  protected setAuthMode(mode: 'join' | 'create'): void {
+    this.authMode.set(mode);
+    this.authError.set('');
+    if (mode === 'create') {
+      this.roomKey = '';
+    }
+  }
+
+  protected async joinRoom(): Promise<void> {
+    const name = this.userName.trim();
+    const roomId = this.roomKey.trim();
+
+    if (!name || !roomId) {
+      this.authError.set('Enter your name and a room key.');
+      return;
+    }
+
+    await this.withRoomRequest(async () => {
+      const result = await this.postRoom('/api/rooms/join', { name, roomId });
+
+      if (result.message !== 'Room available' && !result.roomId) {
+        throw new Error(result.error || result.message || 'Room is not available.');
+      }
+
+      this.enterRoom(name, result.roomId || roomId);
+    });
+  }
+
+  protected async createRoom(): Promise<void> {
+    const name = this.userName.trim();
+
+    if (!name) {
+      this.authError.set('Enter your name to create a room.');
+      return;
+    }
+
+    await this.withRoomRequest(async () => {
+      const result = await this.postRoom('/api/rooms/create', { name });
+
+      if (!result.roomId) {
+        throw new Error(result.error || result.message || 'Could not create a room.');
+      }
+
+      this.roomKey = result.roomId;
+      this.enterRoom(name, result.roomId);
+    });
+  }
+
+  private enterRoom(name: string, roomId: string): void {
+    this.currentUserName.set(name);
+    this.currentRoomId.set(roomId);
+    this.saveRoomSession(name, roomId);
+    this.participants.set([name]);
+    this.messages.set([]);
+    this.unreadMessageCount.set(0);
+    this.connectSocket();
+    this.socket?.emit('joinRoom', { roomId, name });
+    this.signedIn.set(true);
   }
 
   protected sendMessage(): void {
@@ -110,11 +190,10 @@ export class App implements AfterViewInit, OnDestroy {
       return;
     }
 
-    this.addMessage({
-      id: Date.now(),
-      author: 'You',
-      text,
-      isYou: true,
+    this.socket?.emit('sendMessage', {
+      roomId: this.currentRoomId(),
+      sender: this.currentUserName(),
+      content: text,
     });
     this.draft = '';
   }
@@ -156,6 +235,122 @@ export class App implements AfterViewInit, OnDestroy {
 
   protected toggleTheme(): void {
     this.isDarkMode.update((isDarkMode) => !isDarkMode);
+  }
+
+  private async withRoomRequest(request: () => Promise<void>): Promise<void> {
+    this.authError.set('');
+    this.isRoomRequestPending.set(true);
+
+    try {
+      await request();
+    } catch (error) {
+      this.authError.set(
+        error instanceof Error
+          ? error.message
+          : 'Something went wrong while entering the room.',
+      );
+    } finally {
+      this.isRoomRequestPending.set(false);
+    }
+  }
+
+  private async postRoom(path: string, body: Record<string, string>): Promise<RoomResponse> {
+    const response = await fetch(`${API_BASE}${path}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+    });
+    const result = (await response.json()) as RoomResponse;
+
+    if (!response.ok) {
+      throw new Error(result.error || result.message || 'The room server rejected the request.');
+    }
+
+    return result;
+  }
+
+  private connectSocket(): void {
+    if (this.socket) {
+      this.socket.disconnect();
+    }
+
+    this.socket = io(SOCKET_BASE);
+
+    this.socket.on('chatMessage', (message: ChatMessageEvent) => {
+      const author = message.sender || message.author || 'Someone';
+      const text = message.content || message.text || '';
+
+      if (!text) {
+        return;
+      }
+
+      this.addMessage({
+        id: Date.now() + Math.random(),
+        author,
+        text,
+        isYou: author === this.currentUserName(),
+      });
+    });
+
+    this.socket.on('roomUsers', (data: RoomUsersEvent) => {
+      this.participants.set(data.users?.length ? data.users : [this.currentUserName()]);
+    });
+
+    this.socket.on('roomError', (error: { message?: string }) => {
+      this.authError.set(error.message || 'The room socket reported an error.');
+    });
+
+    this.socket.on('connect_error', () => {
+      this.authError.set('Could not connect to the live room server.');
+    });
+  }
+
+  private restoreRoomSession(): void {
+    const session = this.getRoomSession();
+
+    if (!session) {
+      return;
+    }
+
+    this.userName = session.name;
+    this.roomKey = session.roomId;
+    this.joinRoom();
+  }
+
+  private saveRoomSession(name: string, roomId: string): void {
+    sessionStorage.setItem(
+      ROOM_SESSION_KEY,
+      JSON.stringify({
+        name,
+        roomId,
+      } satisfies RoomSession),
+    );
+  }
+
+  private getRoomSession(): RoomSession | null {
+    const value = sessionStorage.getItem(ROOM_SESSION_KEY);
+
+    if (!value) {
+      return null;
+    }
+
+    try {
+      const session = JSON.parse(value) as Partial<RoomSession>;
+
+      if (!session.name || !session.roomId) {
+        return null;
+      }
+
+      return {
+        name: session.name,
+        roomId: session.roomId,
+      };
+    } catch {
+      sessionStorage.removeItem(ROOM_SESSION_KEY);
+      return null;
+    }
   }
 
   private getYouTubeVideoId(link: string): string | null {
