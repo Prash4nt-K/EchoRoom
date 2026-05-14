@@ -3,8 +3,11 @@
   [class.dark-theme]="isDarkMode()"
   [class.ambient-mode]="isAmbientMode()"
 >
-  <nav class="navbar" aria-label="Main navigation">
-    <a class="brand" href="/" aria-label="EchoRoom home">EchoRoom</a>
+  <nav
+    class="navbar"
+    aria-label="Main navigation"
+    [class.mobile-menu-open]="isMobileMenuOpen()"
+  >
     <div class="nav-actions">
       @if (signedIn()) {
         <button
@@ -18,6 +21,7 @@
             <span>Copied</span>
           }
         </button>
+        
         <button
           class="theme-toggle ambient-toggle"
           type="button"
@@ -27,6 +31,35 @@
           {{ isAmbientMode() ? 'Exit ambient' : 'Ambient mode' }}
         </button>
       }
+
+      <button
+        class="mobile-menu-toggle"
+        type="button"
+        [attr.aria-expanded]="isMobileMenuOpen()"
+        aria-controls="mobileNavMenu"
+        aria-label="Toggle navigation menu"
+        (click)="toggleMobileMenu()"
+      >
+        <span aria-hidden="true"></span>
+        <span aria-hidden="true"></span>
+        <span aria-hidden="true"></span>
+      </button>
+    </div>
+
+    <div class="nav-menu" id="mobileNavMenu">
+      <div class="nav-menu-header">
+        <a class="brand" href="/" aria-label="EchoRoom home">EchoRoom</a>
+        <button
+          class="mobile-menu-close"
+          type="button"
+          aria-label="Close navigation menu"
+          (click)="toggleMobileMenu()"
+        >
+          <span aria-hidden="true"></span>
+          <span aria-hidden="true"></span>
+        </button>
+      </div>
+
       <button
         class="theme-toggle"
         type="button"
@@ -131,51 +164,37 @@
         }
       </div>
 
-      <button
-        class="play-toggle"
-        type="button"
-        [disabled]="!hasVideoControl()"
-        (click)="togglePlayback()"
-      >
-        {{ isPlaying() ? 'Pause' : 'Play' }}
-      </button>
+      <div class="video-primary-actions">
+        <button
+          class="play-toggle"
+          type="button"
+          [disabled]="!hasVideoControl()"
+          (click)="togglePlayback()"
+        >
+          {{ isPlaying() ? 'Pause' : 'Play' }}
+        </button>
 
-      <div class="control-strip" aria-live="polite">
-        <span>
+        <div  class="control-strip" aria-live="polite">
           Control:
           <strong>{{ controllerName() || 'Waiting...' }}</strong>
-        </span>
-        @if (!hasVideoControl()) {
+          @if (!hasVideoControl()) {
           <button type="button" (click)="takeVideoControl()">Take control</button>
         }
+
       </div>
+        
+      </div>
+
+
       <p class="control-note">
         The user with control can play/pause/change tracks.
       </p>
-      <div class="ambient-prompt">
-        <span>Try Ambient mode for a better experience.</span>
-        <button
-          class="ambient-toggle"
-          type="button"
-          [class.is-on]="isAmbientMode()"
-          (click)="toggleAmbientMode()"
-        >
-          {{ isAmbientMode() ? 'Exit ambient' : 'Try ambient' }}
-        </button>
-      </div>
-
-      <form class="video-link-form" (ngSubmit)="loadVideo()">
-        <label for="youtubeLink">YouTube link</label>
-        <input
-          id="youtubeLink"
-          name="youtubeLink"
-          type="url"
-          placeholder="Paste a YouTube link to watch together"
-          [disabled]="!hasVideoControl()"
-          [(ngModel)]="youtubeLink"
-        />
-        <button type="submit" [disabled]="!hasVideoControl()">Load</button>
-      </form>
+      <p class="control-note">
+        Paste a YouTube link in the chat to watch together
+      </p>
+      <p class="control-note">
+        Try Ambient mode for better experience.
+      </p>
     </section>
 
     <section class="chat-panel" aria-label="Chat">
@@ -218,7 +237,7 @@
           name="message"
           type="text"
           autocomplete="off"
-          placeholder="Type a message..."
+          placeholder="Type a message... or paste a YouTube link to watch together"
           [(ngModel)]="draft"
         />
         <button type="submit">Send</button>

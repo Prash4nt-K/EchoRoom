@@ -63,7 +63,7 @@ type YouTubePlayer = {
   pauseVideo: () => void;
   seekTo: (seconds: number, allowSeekAhead: boolean) => void;
   getCurrentTime: () => number;
-  loadVideoById: (videoId: string) => void;
+  loadVideoById: (video: string | { videoId: string; startSeconds?: number }) => void;
   destroy: () => void;
 };
 
@@ -109,6 +109,8 @@ export class App implements AfterViewInit, OnDestroy {
   private isPlayerReady = false;
   private pendingVideoState?: VideoSyncEvent;
   private playerSyncIntervalId?: number;
+  private pendingAutoplayTimeoutId?: number;
+  private pendingAutoplayVideoId = '';
   private lastObservedPlayerTime = 0;
   private lastObservedAt = 0;
   private readonly senderClientId = this.createSenderClientId();
@@ -126,6 +128,7 @@ export class App implements AfterViewInit, OnDestroy {
   protected readonly isPlaying = signal(false);
   protected readonly isDarkMode = signal(false);
   protected readonly isAmbientMode = signal(false);
+  protected readonly isMobileMenuOpen = signal(false);
   protected readonly isRoomIdCopied = signal(false);
   protected readonly unreadMessageCount = signal(0);
   protected readonly controllerName = signal('');
@@ -150,6 +153,9 @@ export class App implements AfterViewInit, OnDestroy {
   ngOnDestroy(): void {
     if (this.playerSyncIntervalId) {
       window.clearInterval(this.playerSyncIntervalId);
+    }
+    if (this.pendingAutoplayTimeoutId) {
+      window.clearTimeout(this.pendingAutoplayTimeoutId);
     }
     this.youtubePlayer?.destroy();
     this.socket?.disconnect();
@@ -223,6 +229,11 @@ export class App implements AfterViewInit, OnDestroy {
       return;
     }
 
+    if (this.tryLoadVideoFromChat(text)) {
+      this.draft = '';
+      return;
+    }
+
     this.socket?.emit('sendMessage', {
       roomId: this.currentRoomId(),
       sender: this.currentUserName(),
@@ -242,26 +253,9 @@ export class App implements AfterViewInit, OnDestroy {
   }
 
   protected loadVideo(): void {
-    if (!this.hasVideoControl()) {
-      return;
+    if (this.loadVideoFromLink(this.youtubeLink, true)) {
+      this.youtubeLink = '';
     }
-
-    const videoId = this.getYouTubeVideoId(this.youtubeLink);
-
-    if (!videoId) {
-      return;
-    }
-
-    if (this.youtubePlayer) {
-      this.youtubePlayer.loadVideoById(videoId);
-    } else {
-      this.videoId.set(videoId);
-    }
-
-    this.videoId.set(videoId);
-    this.isPlaying.set(true);
-    this.emitVideoState('change', videoId, 0, true);
-    this.youtubeLink = '';
   }
 
   protected togglePlayback(): void {
@@ -270,6 +264,7 @@ export class App implements AfterViewInit, OnDestroy {
     }
 
     if (this.isPlaying()) {
+      this.clearPendingAutoplay();
       this.isPlaying.set(false);
       this.youtubePlayer?.pauseVideo();
       return;
@@ -281,6 +276,10 @@ export class App implements AfterViewInit, OnDestroy {
 
   protected toggleTheme(): void {
     this.isDarkMode.update((isDarkMode) => !isDarkMode);
+  }
+
+  protected toggleMobileMenu(): void {
+    this.isMobileMenuOpen.update((isOpen) => !isOpen);
   }
 
   protected toggleAmbientMode(): void {
@@ -455,7 +454,10 @@ export class App implements AfterViewInit, OnDestroy {
 
     if (state.videoId && state.videoId !== this.videoId()) {
       this.videoId.set(state.videoId);
-      this.youtubePlayer.loadVideoById(state.videoId);
+      if (state.type === 'change' || state.isPlaying) {
+        this.pendingAutoplayVideoId = state.videoId;
+      }
+      this.youtubePlayer.loadVideoById({ videoId: state.videoId, startSeconds: 0 });
     }
 
     if (Number.isFinite(nextTime)) {
@@ -468,6 +470,7 @@ export class App implements AfterViewInit, OnDestroy {
     } else if (state.type === 'play' || state.type === 'change' || state.isPlaying) {
       this.youtubePlayer.playVideo();
       this.isPlaying.set(true);
+      this.ensureVideoPlayback(nextVideoId);
     }
 
     this.videoId.set(nextVideoId);
@@ -617,6 +620,89 @@ export class App implements AfterViewInit, OnDestroy {
     return null;
   }
 
+  private tryLoadVideoFromChat(text: string): boolean {
+    const videoId = this.getYouTubeVideoId(text);
+
+    if (!videoId) {
+      return false;
+    }
+
+    if (!this.hasVideoControl()) {
+      return false;
+    }
+
+    this.loadVideoById(videoId);
+    return true;
+  }
+
+  private loadVideoFromLink(link: string, requireControl: boolean): boolean {
+    if (requireControl && !this.hasVideoControl()) {
+      return false;
+    }
+
+    const videoId = this.getYouTubeVideoId(link);
+
+    if (!videoId) {
+      return false;
+    }
+
+    this.loadVideoById(videoId);
+    return true;
+  }
+
+  private loadVideoById(videoId: string): void {
+    if (this.youtubePlayer) {
+      this.pendingAutoplayVideoId = videoId;
+      this.youtubePlayer.loadVideoById({ videoId, startSeconds: 0 });
+    } else {
+      this.videoId.set(videoId);
+    }
+
+    this.videoId.set(videoId);
+    this.isPlaying.set(true);
+    this.ensureVideoPlayback(videoId);
+    this.emitVideoState('change', videoId, 0, true);
+  }
+
+  private ensureVideoPlayback(videoId: string): void {
+    if (this.pendingAutoplayTimeoutId) {
+      window.clearTimeout(this.pendingAutoplayTimeoutId);
+    }
+
+    this.pendingAutoplayVideoId = videoId;
+
+    const retryPlayback = (attempt: number): void => {
+      if (
+        !this.youtubePlayer ||
+        this.videoId() !== videoId ||
+        this.pendingAutoplayVideoId !== videoId
+      ) {
+        return;
+      }
+
+      this.isPlaying.set(true);
+      this.youtubePlayer.playVideo();
+
+      if (attempt < 6) {
+        this.pendingAutoplayTimeoutId = window.setTimeout(
+          () => retryPlayback(attempt + 1),
+          350,
+        );
+      }
+    };
+
+    retryPlayback(0);
+  }
+
+  private clearPendingAutoplay(): void {
+    this.pendingAutoplayVideoId = '';
+
+    if (this.pendingAutoplayTimeoutId) {
+      window.clearTimeout(this.pendingAutoplayTimeoutId);
+      this.pendingAutoplayTimeoutId = undefined;
+    }
+  }
+
   private addMessage(message: ChatMessage): void {
     const shouldScrollToMessage = message.isYou || this.isChatAtBottom();
 
@@ -690,6 +776,7 @@ export class App implements AfterViewInit, OnDestroy {
           }
 
           if (event.data === state.PLAYING) {
+            this.clearPendingAutoplay();
             this.isPlaying.set(true);
             const currentTime = this.getPlayerCurrentTime();
             this.rememberObservedPlayerTime(currentTime);
@@ -697,6 +784,11 @@ export class App implements AfterViewInit, OnDestroy {
           }
 
           if (event.data === state.PAUSED || event.data === state.ENDED) {
+            if (this.pendingAutoplayVideoId === this.videoId()) {
+              this.ensureVideoPlayback(this.videoId());
+              return;
+            }
+
             this.isPlaying.set(false);
             const currentTime = this.getPlayerCurrentTime();
             this.rememberObservedPlayerTime(currentTime);

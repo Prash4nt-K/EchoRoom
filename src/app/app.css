@@ -422,10 +422,7 @@
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
   color: var(--muted);
-  padding: 10px 12px;
   font-size: 0.9rem;
   font-weight: 800;
 }
@@ -720,15 +717,26 @@ h1 {
 }
 
 @media (max-width: 520px) {
-  .navbar {
-    padding: 0 16px;
+  :host {
+    height: auto;
+    overflow: visible;
+  }
+
+  .app-shell {
+    height: auto;
+    overflow: visible;
   }
 
   .watch-room {
-    padding: 12px;
+    padding: 4px 4px 8px;
   }
 
-  .composer {
-    grid-template-columns: 1fr;
+  .video-section {
+    padding: 4px 4px 6px;
   }
+
+  .chat-panel {
+    overflow: visible;
+  }
+
 }
