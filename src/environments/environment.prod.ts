@@ -1,5 +1,5 @@
 export const environment = {
   production: true,
-  apiBaseUrl: 'http://192.168.29.3:8080',
-  socketBaseUrl: 'http://192.168.29.3:9092',
+  apiBaseUrl: 'https://echoroom-backend-j8or.onrender.com/api',
+  socketBaseUrl: 'wss://echoroom-backend-j8or.onrender.com/ws',
 };

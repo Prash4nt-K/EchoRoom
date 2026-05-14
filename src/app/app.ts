@@ -10,7 +10,6 @@ import {
 } from '@angular/core';
 import { DomSanitizer } from '@angular/platform-browser';
 import { FormsModule } from '@angular/forms';
-import { io, Socket } from 'socket.io-client';
 import { environment } from '../environments/environment';
 
 type ChatMessage = {
@@ -53,6 +52,15 @@ type ControlStateEvent = {
   controllerClientId?: string;
 };
 
+type SocketErrorResponse = {
+  message?: string;
+};
+
+type RealtimeMessage<T = unknown> = {
+  event: string;
+  data: T;
+};
+
 type RoomSession = {
   name: string;
   roomId: string;
@@ -91,6 +99,7 @@ declare global {
 
 let youtubeApiPromise: Promise<void> | null = null;
 const ROOM_SESSION_KEY = 'echo-room-session';
+const SENDER_CLIENT_ID_KEY = 'echo-room-sender-client-id';
 
 @Component({
   selector: 'app-root',
@@ -104,7 +113,9 @@ export class App implements AfterViewInit, OnDestroy {
 
   private readonly sanitizer = inject(DomSanitizer);
   private youtubePlayer?: YouTubePlayer;
-  private socket?: Socket;
+  private realtimeSocket?: WebSocket;
+  private reconnectTimeoutId?: number;
+  private isRealtimeDisconnectExpected = false;
   private isApplyingRemoteVideoState = false;
   private isPlayerReady = false;
   private pendingVideoState?: VideoSyncEvent;
@@ -158,7 +169,7 @@ export class App implements AfterViewInit, OnDestroy {
       window.clearTimeout(this.pendingAutoplayTimeoutId);
     }
     this.youtubePlayer?.destroy();
-    this.socket?.disconnect();
+    this.disconnectRealtime();
   }
 
   protected setAuthMode(mode: 'join' | 'create'): void {
@@ -179,7 +190,11 @@ export class App implements AfterViewInit, OnDestroy {
     }
 
     await this.withRoomRequest(async () => {
-      const result = await this.postRoom('/api/rooms/join', { name, roomId });
+      const result = await this.postRoom('/rooms/join', {
+        name,
+        roomId,
+        senderClientId: this.senderClientId,
+      });
 
       if (result.message !== 'Room available' && !result.roomId) {
         throw new Error(result.error || result.message || 'Room is not available.');
@@ -198,7 +213,7 @@ export class App implements AfterViewInit, OnDestroy {
     }
 
     await this.withRoomRequest(async () => {
-      const result = await this.postRoom('/api/rooms/create', { name });
+      const result = await this.postRoom('/rooms/create', { name });
 
       if (!result.roomId) {
         throw new Error(result.error || result.message || 'Could not create a room.');
@@ -217,9 +232,8 @@ export class App implements AfterViewInit, OnDestroy {
     this.messages.set([]);
     this.controllerName.set('');
     this.unreadMessageCount.set(0);
-    this.connectSocket();
-    this.socket?.emit('joinRoom', { roomId, name, senderClientId: this.senderClientId });
     this.signedIn.set(true);
+    this.connectRealtime();
   }
 
   protected sendMessage(): void {
@@ -234,7 +248,7 @@ export class App implements AfterViewInit, OnDestroy {
       return;
     }
 
-    this.socket?.emit('sendMessage', {
+    this.sendRealtime('sendMessage', {
       roomId: this.currentRoomId(),
       sender: this.currentUserName(),
       content: text,
@@ -303,11 +317,11 @@ export class App implements AfterViewInit, OnDestroy {
   }
 
   protected takeVideoControl(): void {
-    if (!this.socket || !this.currentRoomId()) {
+    if (!this.currentRoomId()) {
       return;
     }
 
-    this.socket.emit('requestControl', {
+    this.sendRealtime('requestControl', {
       roomId: this.currentRoomId(),
       name: this.currentUserName(),
       senderClientId: this.senderClientId,
@@ -348,57 +362,149 @@ export class App implements AfterViewInit, OnDestroy {
     return result;
   }
 
-  private connectSocket(): void {
-    if (this.socket) {
-      this.socket.disconnect();
+  private connectRealtime(): void {
+    this.closeRealtimeSocket();
+    this.isRealtimeDisconnectExpected = false;
+
+    const socket = new WebSocket(environment.socketBaseUrl);
+    this.realtimeSocket = socket;
+
+    socket.onopen = () => {
+      this.sendRealtime('joinRoom', {
+        roomId: this.currentRoomId(),
+        name: this.currentUserName(),
+        senderClientId: this.senderClientId,
+      });
+    };
+
+    socket.onmessage = (message) => {
+      this.handleRealtimeMessage(message);
+    };
+
+    socket.onerror = () => {
+      this.authError.set('Could not connect to the live room server.');
+    };
+
+    socket.onclose = () => {
+      if (this.realtimeSocket === socket) {
+        this.realtimeSocket = undefined;
+      }
+
+      if (!this.isRealtimeDisconnectExpected && this.signedIn() && this.currentRoomId()) {
+        this.scheduleRealtimeReconnect();
+      }
+    };
+  }
+
+  private disconnectRealtime(): void {
+    this.isRealtimeDisconnectExpected = true;
+    this.clearRealtimeReconnect();
+    this.closeRealtimeSocket();
+  }
+
+  private closeRealtimeSocket(): void {
+    this.clearRealtimeReconnect();
+
+    if (!this.realtimeSocket) {
+      return;
     }
 
-    this.socket = io(environment.socketBaseUrl);
+    this.realtimeSocket.onopen = null;
+    this.realtimeSocket.onmessage = null;
+    this.realtimeSocket.onerror = null;
+    this.realtimeSocket.onclose = null;
+    this.realtimeSocket.close();
+    this.realtimeSocket = undefined;
+  }
 
-    this.socket.on('chatMessage', (message: ChatMessageEvent) => {
-      const author = message.sender || message.author || 'Someone';
-      const text = message.content || message.text || '';
+  private scheduleRealtimeReconnect(): void {
+    if (this.reconnectTimeoutId) {
+      return;
+    }
 
-      if (!text) {
-        return;
-      }
+    this.reconnectTimeoutId = window.setTimeout(() => {
+      this.reconnectTimeoutId = undefined;
+      this.connectRealtime();
+    }, 2000);
+  }
 
-      this.addMessage({
-        id: Date.now() + Math.random(),
-        author,
-        text,
-        isYou: author === this.currentUserName(),
-      });
+  private clearRealtimeReconnect(): void {
+    if (!this.reconnectTimeoutId) {
+      return;
+    }
+
+    window.clearTimeout(this.reconnectTimeoutId);
+    this.reconnectTimeoutId = undefined;
+  }
+
+  private sendRealtime(event: string, data: unknown): void {
+    if (this.realtimeSocket?.readyState !== WebSocket.OPEN) {
+      return;
+    }
+
+    this.realtimeSocket.send(
+      JSON.stringify({
+        event,
+        data,
+      } satisfies RealtimeMessage),
+    );
+  }
+
+  private handleRealtimeMessage(message: MessageEvent): void {
+    let payload: RealtimeMessage;
+
+    try {
+      payload = JSON.parse(message.data) as RealtimeMessage;
+    } catch {
+      return;
+    }
+
+    switch (payload.event) {
+      case 'chatMessage':
+        this.handleChatMessage(payload.data as ChatMessageEvent);
+        break;
+      case 'roomUsers':
+        this.handleRoomUsers(payload.data as RoomUsersEvent);
+        break;
+      case 'roomError':
+        this.authError.set(
+          (payload.data as SocketErrorResponse).message ||
+            'The room socket reported an error.',
+        );
+        break;
+      case 'videoState':
+      case 'roomVideoState':
+        this.applyRemoteVideoState(payload.data as VideoSyncEvent);
+        break;
+      case 'controlState':
+        this.applyControlState(payload.data as ControlStateEvent);
+        break;
+    }
+  }
+
+  private handleChatMessage(message: ChatMessageEvent): void {
+    const author = message.sender || message.author || 'Someone';
+    const text = message.content || message.text || '';
+
+    if (!text) {
+      return;
+    }
+
+    this.addMessage({
+      id: Date.now() + Math.random(),
+      author,
+      text,
+      isYou: author === this.currentUserName(),
     });
+  }
 
-    this.socket.on('roomUsers', (data: RoomUsersEvent) => {
-      const users = data.users?.length ? data.users : [this.currentUserName()];
-      this.participants.set(users);
+  private handleRoomUsers(data: RoomUsersEvent): void {
+    const users = data.users?.length ? data.users : [this.currentUserName()];
+    this.participants.set(users);
 
-      if (!this.controllerName() && users[0]) {
-        this.controllerName.set(users[0]);
-      }
-    });
-
-    this.socket.on('roomError', (error: { message?: string }) => {
-      this.authError.set(error.message || 'The room socket reported an error.');
-    });
-
-    this.socket.on('videoState', (state: VideoSyncEvent) => {
-      this.applyRemoteVideoState(state);
-    });
-
-    this.socket.on('roomVideoState', (state: VideoSyncEvent) => {
-      this.applyRemoteVideoState(state);
-    });
-
-    this.socket.on('controlState', (state: ControlStateEvent) => {
-      this.applyControlState(state);
-    });
-
-    this.socket.on('connect_error', () => {
-      this.authError.set('Could not connect to the live room server.');
-    });
+    if (!this.controllerName() && users[0]) {
+      this.controllerName.set(users[0]);
+    }
   }
 
   private applyControlState(state: ControlStateEvent): void {
@@ -415,7 +521,8 @@ export class App implements AfterViewInit, OnDestroy {
     isPlaying = this.isPlaying(),
   ): void {
     if (
-      !this.socket ||
+      !this.realtimeSocket ||
+      this.realtimeSocket.readyState !== WebSocket.OPEN ||
       !this.currentRoomId() ||
       !this.hasVideoControl() ||
       this.isApplyingRemoteVideoState
@@ -423,7 +530,7 @@ export class App implements AfterViewInit, OnDestroy {
       return;
     }
 
-    this.socket.emit('videoState', {
+    this.sendRealtime('videoState', {
       roomId: this.currentRoomId(),
       sender: this.currentUserName(),
       senderClientId: this.senderClientId,
@@ -538,7 +645,15 @@ export class App implements AfterViewInit, OnDestroy {
   }
 
   private createSenderClientId(): string {
-    return crypto.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
+    const existingClientId = sessionStorage.getItem(SENDER_CLIENT_ID_KEY);
+
+    if (existingClientId) {
+      return existingClientId;
+    }
+
+    const clientId = crypto.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
+    sessionStorage.setItem(SENDER_CLIENT_ID_KEY, clientId);
+    return clientId;
   }
 
   private restoreRoomSession(): void {
