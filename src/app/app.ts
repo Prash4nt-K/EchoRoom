@@ -75,6 +75,11 @@ type YouTubePlayer = {
   destroy: () => void;
 };
 
+type CompactRoomLabelsQuery = Pick<
+  MediaQueryList,
+  'matches' | 'addEventListener' | 'removeEventListener'
+>;
+
 declare global {
   interface Window {
     YT?: {
@@ -101,6 +106,7 @@ let youtubeApiPromise: Promise<void> | null = null;
 const ROOM_SESSION_KEY = 'echo-room-session';
 const SENDER_CLIENT_ID_KEY = 'echo-room-sender-client-id';
 const ROOM_INVITE_QUERY_PARAM = 'room';
+const DEFAULT_VIDEO_ID = '60ItHLz5WEA';
 
 @Component({
   selector: 'app-root',
@@ -125,7 +131,10 @@ export class App implements AfterViewInit, OnDestroy {
   private pendingAutoplayVideoId = '';
   private lastObservedPlayerTime = 0;
   private lastObservedAt = 0;
-  private readonly compactRoomLabelsQuery = window.matchMedia('(max-width: 520px)');
+  private shouldSeedDefaultVideoState = false;
+  private defaultVideoSeedUntil = 0;
+  private defaultVideoSeedTimeoutIds: number[] = [];
+  private readonly compactRoomLabelsQuery = this.createCompactRoomLabelsQuery();
   private readonly handleCompactRoomLabelsChange = (event: MediaQueryListEvent): void => {
     this.usesCompactRoomLabels.set(event.matches);
   };
@@ -153,7 +162,7 @@ export class App implements AfterViewInit, OnDestroy {
   protected readonly hasVideoControl = computed(
     () => this.controllerName() === this.currentUserName(),
   );
-  protected readonly videoId = signal('dQw4w9WgXcQ');
+  protected readonly videoId = signal(DEFAULT_VIDEO_ID);
   protected readonly videoUrl = computed(() =>
     this.sanitizer.bypassSecurityTrustResourceUrl(
       `https://www.youtube.com/embed/${this.videoId()}?enablejsapi=1&origin=${window.location.origin}`,
@@ -176,6 +185,7 @@ export class App implements AfterViewInit, OnDestroy {
     if (this.pendingAutoplayTimeoutId) {
       window.clearTimeout(this.pendingAutoplayTimeoutId);
     }
+    this.clearDefaultVideoSeedTimeouts();
     this.youtubePlayer?.destroy();
     this.disconnectRealtime();
     this.compactRoomLabelsQuery.removeEventListener('change', this.handleCompactRoomLabelsChange);
@@ -229,13 +239,17 @@ export class App implements AfterViewInit, OnDestroy {
       }
 
       this.roomKey = result.roomId;
-      this.enterRoom(name, result.roomId);
+      this.videoId.set(DEFAULT_VIDEO_ID);
+      this.enterRoom(name, result.roomId, true);
     });
   }
 
-  private enterRoom(name: string, roomId: string): void {
+  private enterRoom(name: string, roomId: string, shouldSeedDefaultVideoState = false): void {
     this.currentUserName.set(name);
     this.currentRoomId.set(roomId);
+    this.clearDefaultVideoSeedTimeouts();
+    this.shouldSeedDefaultVideoState = shouldSeedDefaultVideoState;
+    this.defaultVideoSeedUntil = shouldSeedDefaultVideoState ? Date.now() + 5000 : 0;
     this.saveRoomSession(name, roomId);
     this.participants.set([name]);
     this.messages.set([]);
@@ -400,6 +414,7 @@ export class App implements AfterViewInit, OnDestroy {
         name: this.currentUserName(),
         senderClientId: this.senderClientId,
       });
+      this.seedDefaultVideoStateRepeatedly();
     };
 
     socket.onmessage = (message) => {
@@ -473,6 +488,41 @@ export class App implements AfterViewInit, OnDestroy {
         data,
       } satisfies RealtimeMessage),
     );
+  }
+
+  private seedDefaultVideoStateRepeatedly(): void {
+    if (!this.shouldSeedDefaultVideoState || !this.currentRoomId()) {
+      return;
+    }
+
+    this.sendRealtime('videoState', {
+      roomId: this.currentRoomId(),
+      sender: this.currentUserName(),
+      senderClientId: this.senderClientId,
+      type: 'change',
+      videoId: DEFAULT_VIDEO_ID,
+      currentTime: 0,
+      isPlaying: false,
+      updatedAt: Date.now(),
+    });
+
+    if (Date.now() >= this.defaultVideoSeedUntil) {
+      this.shouldSeedDefaultVideoState = false;
+      this.defaultVideoSeedUntil = 0;
+      return;
+    }
+
+    this.defaultVideoSeedTimeoutIds.push(
+      window.setTimeout(() => this.seedDefaultVideoStateRepeatedly(), 450),
+    );
+  }
+
+  private clearDefaultVideoSeedTimeouts(): void {
+    for (const timeoutId of this.defaultVideoSeedTimeoutIds) {
+      window.clearTimeout(timeoutId);
+    }
+
+    this.defaultVideoSeedTimeoutIds = [];
   }
 
   private handleRealtimeMessage(message: MessageEvent): void {
@@ -572,6 +622,11 @@ export class App implements AfterViewInit, OnDestroy {
       return;
     }
 
+    if (this.shouldHoldDefaultVideoState(state)) {
+      this.videoId.set(DEFAULT_VIDEO_ID);
+      return;
+    }
+
     if (!this.isPlayerReady || !this.youtubePlayer) {
       this.pendingVideoState = state;
       if (state.videoId) {
@@ -609,6 +664,15 @@ export class App implements AfterViewInit, OnDestroy {
     window.setTimeout(() => {
       this.isApplyingRemoteVideoState = false;
     }, 300);
+  }
+
+  private shouldHoldDefaultVideoState(state: VideoSyncEvent): boolean {
+    return (
+      this.shouldSeedDefaultVideoState &&
+      Date.now() < this.defaultVideoSeedUntil &&
+      !!state.videoId &&
+      state.videoId !== DEFAULT_VIDEO_ID
+    );
   }
 
   private getSyncedTime(state: VideoSyncEvent): number {
@@ -679,6 +743,14 @@ export class App implements AfterViewInit, OnDestroy {
     const clientId = crypto.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
     sessionStorage.setItem(SENDER_CLIENT_ID_KEY, clientId);
     return clientId;
+  }
+
+  private createCompactRoomLabelsQuery(): CompactRoomLabelsQuery {
+    return window.matchMedia?.('(max-width: 520px)') ?? {
+      matches: false,
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+    };
   }
 
   private initializeRoomEntry(): void {
