@@ -20,6 +20,9 @@ describe('App', () => {
     const compiled = fixture.nativeElement as HTMLElement;
     expect(compiled.querySelector('.brand')?.textContent).toContain('EchoRoom');
     expect(compiled.querySelector('iframe')?.getAttribute('title')).toContain('Shared YouTube video');
-    expect(compiled.querySelector('.chat-area')?.textContent).toContain('Guest 208');
+    expect(compiled.querySelector('.chat-area')?.getAttribute('aria-label')).toContain('Messages');
+    expect(compiled.querySelector('#messageInput')?.getAttribute('placeholder')).toContain(
+      'Type a message',
+    );
   });
 });

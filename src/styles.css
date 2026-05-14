@@ -183,7 +183,6 @@ input {
 .app-shell.ambient-mode .control-strip,
 .app-shell.ambient-mode .control-note,
 .app-shell.ambient-mode .ambient-prompt,
-.app-shell.ambient-mode .video-link-form,
 .app-shell.ambient-mode .video-overlay {
   display: none;
 }
@@ -378,6 +377,7 @@ input {
   .mobile-menu-toggle {
     display: inline-grid;
     flex: 0 0 auto;
+    margin-left: auto;
     width: 26px;
     height: 24px;
     place-items: center;

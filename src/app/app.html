@@ -16,8 +16,20 @@
           [attr.aria-label]="'Copy room id ' + currentRoomId()"
           (click)="copyRoomId()"
         >
-          Room: {{ currentRoomId() }}
+          {{ usesCompactRoomLabels() ? currentRoomId() : 'Room: ' + currentRoomId() }}
           @if (isRoomIdCopied()) {
+            <span>Copied</span>
+          }
+        </button>
+
+        <button
+          class="room-info"
+          type="button"
+          [attr.aria-label]="'Copy invite link for room ' + currentRoomId()"
+          (click)="copyRoomLink()"
+        >
+          {{ usesCompactRoomLabels() ? 'Invite' : 'Invite link' }}
+          @if (isRoomLinkCopied()) {
             <span>Copied</span>
           }
         </button>

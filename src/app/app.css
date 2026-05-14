@@ -75,10 +75,13 @@
 }
 
 .room-info {
-  font-size: 0.92rem;
+  all: unset;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  padding: 8px;
   color: var(--muted);
-  font-weight: 700;
-  margin-right: 14px;
+  cursor: pointer;
+  font-size: smaller;
 }
 
 .signin-mode-toggle {
@@ -399,16 +402,6 @@
   text-align: center;
 }
 
-.video-link-form {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 10px;
-  margin-top: auto;
-  padding-top: 14px;
-  border-top: 1px solid var(--border);
-}
-
-.video-link-form label,
 .composer label {
   position: absolute;
   width: 1px;
@@ -450,8 +443,6 @@
   line-height: 1.35;
 }
 
-.video-link-form input,
-.video-link-form button,
 .play-toggle {
   min-height: 38px;
   border-radius: 8px;
@@ -459,21 +450,6 @@
   font-size: 0.9rem;
 }
 
-.video-link-form input {
-  min-width: 0;
-  border: 1px solid var(--border-strong);
-  background: var(--input-bg);
-  color: var(--text);
-  padding: 0 12px;
-  outline: none;
-}
-
-.video-link-form input:focus {
-  border-color: #2f6fbd;
-  box-shadow: 0 0 0 3px var(--focus);
-}
-
-.video-link-form button,
 .play-toggle {
   border: 0;
   background: var(--primary);
@@ -483,27 +459,22 @@
   cursor: pointer;
 }
 
-.video-link-form input:disabled,
-.video-link-form button:disabled,
 .play-toggle:disabled {
   cursor: not-allowed;
   opacity: 0.58;
 }
 
-.app-shell:not(.dark-theme) .video-link-form button,
 .app-shell:not(.dark-theme) .play-toggle,
 .app-shell:not(.dark-theme) .composer button {
   background: linear-gradient(135deg, #2d8f78, #67c0a6);
   color: #10201e;
 }
 
-.video-link-form button:hover,
 .play-toggle:hover,
 .composer button:hover {
   background: var(--primary-hover);
 }
 
-.app-shell:not(.dark-theme) .video-link-form button:hover,
 .app-shell:not(.dark-theme) .play-toggle:hover,
 .app-shell:not(.dark-theme) .composer button:hover {
   background: linear-gradient(135deg, #23745f, #f4c15d);

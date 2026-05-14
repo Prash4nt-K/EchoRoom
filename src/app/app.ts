@@ -100,6 +100,7 @@ declare global {
 let youtubeApiPromise: Promise<void> | null = null;
 const ROOM_SESSION_KEY = 'echo-room-session';
 const SENDER_CLIENT_ID_KEY = 'echo-room-sender-client-id';
+const ROOM_INVITE_QUERY_PARAM = 'room';
 
 @Component({
   selector: 'app-root',
@@ -124,6 +125,10 @@ export class App implements AfterViewInit, OnDestroy {
   private pendingAutoplayVideoId = '';
   private lastObservedPlayerTime = 0;
   private lastObservedAt = 0;
+  private readonly compactRoomLabelsQuery = window.matchMedia('(max-width: 520px)');
+  private readonly handleCompactRoomLabelsChange = (event: MediaQueryListEvent): void => {
+    this.usesCompactRoomLabels.set(event.matches);
+  };
   private readonly senderClientId = this.createSenderClientId();
 
   protected draft = '';
@@ -141,6 +146,8 @@ export class App implements AfterViewInit, OnDestroy {
   protected readonly isAmbientMode = signal(false);
   protected readonly isMobileMenuOpen = signal(false);
   protected readonly isRoomIdCopied = signal(false);
+  protected readonly isRoomLinkCopied = signal(false);
+  protected readonly usesCompactRoomLabels = signal(this.compactRoomLabelsQuery.matches);
   protected readonly unreadMessageCount = signal(0);
   protected readonly controllerName = signal('');
   protected readonly hasVideoControl = computed(
@@ -156,9 +163,10 @@ export class App implements AfterViewInit, OnDestroy {
   protected readonly messages = signal<ChatMessage[]>([]);
 
   ngAfterViewInit(): void {
+    this.compactRoomLabelsQuery.addEventListener('change', this.handleCompactRoomLabelsChange);
     this.loadYouTubeApi().then(() => this.createYouTubePlayer());
     this.scrollChatToBottom('auto');
-    this.restoreRoomSession();
+    this.initializeRoomEntry();
   }
 
   ngOnDestroy(): void {
@@ -170,6 +178,7 @@ export class App implements AfterViewInit, OnDestroy {
     }
     this.youtubePlayer?.destroy();
     this.disconnectRealtime();
+    this.compactRoomLabelsQuery.removeEventListener('change', this.handleCompactRoomLabelsChange);
   }
 
   protected setAuthMode(mode: 'join' | 'create'): void {
@@ -313,6 +322,22 @@ export class App implements AfterViewInit, OnDestroy {
       window.setTimeout(() => this.isRoomIdCopied.set(false), 1600);
     } catch {
       this.authError.set('Could not copy room id.');
+    }
+  }
+
+  protected async copyRoomLink(): Promise<void> {
+    const roomId = this.currentRoomId();
+
+    if (!roomId) {
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(this.createRoomInviteUrl(roomId));
+      this.isRoomLinkCopied.set(true);
+      window.setTimeout(() => this.isRoomLinkCopied.set(false), 1600);
+    } catch {
+      this.authError.set('Could not copy room link.');
     }
   }
 
@@ -656,6 +681,20 @@ export class App implements AfterViewInit, OnDestroy {
     return clientId;
   }
 
+  private initializeRoomEntry(): void {
+    const invitedRoomId = this.getInvitedRoomId();
+
+    if (invitedRoomId) {
+      const session = this.getRoomSession();
+      this.authMode.set('join');
+      this.roomKey = invitedRoomId;
+      this.userName = session?.name ?? '';
+      return;
+    }
+
+    this.restoreRoomSession();
+  }
+
   private restoreRoomSession(): void {
     const session = this.getRoomSession();
 
@@ -666,6 +705,20 @@ export class App implements AfterViewInit, OnDestroy {
     this.userName = session.name;
     this.roomKey = session.roomId;
     this.joinRoom();
+  }
+
+  private getInvitedRoomId(): string {
+    const roomId = new URLSearchParams(window.location.search)
+      .get(ROOM_INVITE_QUERY_PARAM)
+      ?.trim();
+
+    return roomId ?? '';
+  }
+
+  private createRoomInviteUrl(roomId: string): string {
+    const inviteUrl = new URL(window.location.href);
+    inviteUrl.searchParams.set(ROOM_INVITE_QUERY_PARAM, roomId);
+    return inviteUrl.toString();
   }
 
   private saveRoomSession(name: string, roomId: string): void {
